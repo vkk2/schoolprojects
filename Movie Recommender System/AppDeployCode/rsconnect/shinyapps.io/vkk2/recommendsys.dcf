@@ -1,0 +1,12 @@
+name: recommendsys
+title: recommendsys
+username:
+account: vkk2
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3394075
+bundleId: 3981174
+url: https://vkk2.shinyapps.io/recommendsys/
+when: 1607828634.82369
+asMultiple: FALSE
+asStatic: FALSE
