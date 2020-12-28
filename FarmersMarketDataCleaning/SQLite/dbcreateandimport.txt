@@ -1,0 +1,5 @@
+sqlite3 .farmersmarket.db
+.mode csv
+.read farmersmarket_schema.sql
+.header on
+.import OpenRefineCleaned_pythonZipCodeCalcadded.csv farmersmarket

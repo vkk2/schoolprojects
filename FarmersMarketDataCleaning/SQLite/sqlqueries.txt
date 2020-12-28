@@ -1,0 +1,24 @@
+/* Check FMID is unique for each observation */
+SELECT COUNT(DISTINCT FMID) as Count
+FROM farmersmarket;
+
+/* Check FMID has no nulls */
+SELECT COUNT(1) FROM farmersmarket
+WHERE FMID is NULL;
+
+/* Check latitude and longitude are within range */
+SELECT COUNT(1)
+FROM   farmersmarket 
+WHERE	(Cast(y AS FLOAT) < 0
+OR Cast(y AS FLOAT) > 90
+OR Cast(x AS FLOAT) > 180
+OR Cast(x AS FLOAT) <- 180 ); 
+
+/* check zip column should match the ZipcodeCalc */
+SELECT COUNT(1) FROM farmersmarket 
+WHERE zip <> ZipcodeCalc;
+
+/*update zip column with values from ZipcodeCalc
+UPDATE farmersmarket 
+SET zip=ZipcodeCalc
+WHERE zip <> ZipcodeCalc;

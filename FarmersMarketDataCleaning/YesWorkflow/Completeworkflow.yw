@@ -1,0 +1,19 @@
+# @begin CompleteWorkflow  @desc Workflow for cleaning farmersmarket DataSet
+# @in dirty_farmersdata.csv  @uri file://dirty_farmersdata.csv
+
+#     @begin OpenRefine Clean  @desc Use OpenRefine to clean dirty_farmersdata.csv
+#     @in dirty_farmersdata.csv  @uri file://initialdata/dirty_farmersdata.csv
+#     @out OpenRefineCleaned.csv  @uri file://OpenRefineCleaned.csv
+#     @end OpenRefine Clean
+#
+#     @begin PythonZipcodeAdd  @desc Use Python to add ZipCodeCal OpenRefineCleaned.csv
+#     @in OpenRefineCleaned.csv  @uri file://initialdata/OpenRefineCleaned.csv
+#     @out OpenRefineCleaned_pythonZipCodeCalcadded.csv  @uri file://OpenRefineCleaned_pythonZipCodeCalcadded.csv
+#     @end PythonZipcodeAdd
+
+#     @begin CleanICinSQLite  @desc Use SQLite to clean IC on  OpenRefineCleaned_pythonZipCodeCalcadded.csv
+#     @in OpenRefineCleaned_pythonZipCodeCalcadded.csv  @uri file://OpenRefineCleaned_pythonZipCodeCalcadded.csv
+#     @out farmersmarket_clean.csv  @uri file://farmersmarket_clean.csv
+#     @end CleanICinSQLite
+
+# @end CompleteWorkflow

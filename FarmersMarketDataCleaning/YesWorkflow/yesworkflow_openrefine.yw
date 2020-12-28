@@ -1,0 +1,332 @@
+@begin OpenRefine_Workflow @desc Workflow of the cleaning done with OR
+
+@in dirty_farmersdata
+@out or_farmersdata 
+
+
+	@begin OpenRefineClean @desc  Load Data in Open Refine for cleaning
+
+	@in dirty_farmersdata
+
+	@out MarketName
+
+	@out Website
+
+	@out Facebook
+
+	@out Twitter
+
+	@out YouTube
+
+	@out OtherMedia
+
+	@out Street
+
+	@out City
+
+	@out County
+
+	@out State
+
+	@out Zip
+
+	@out Season1Date
+
+	@out Season1Time
+
+	@out Season2Date
+
+	@out Season2Time
+
+	@out Season3Date
+
+	@out Season3Time
+
+	@out Season4Date
+
+	@out Season4Time
+
+	@out Season4Time
+	
+	@out x
+
+	@out y
+	
+	@out NoCleaningColumns
+
+	@end OpenRefineClean
+	
+	
+	@begin TrimWs @desc Trim leading and trailing whitespace
+
+	@in MarketName
+
+	@in Website
+
+	@in Facebook
+
+	@in Twitter
+
+	@in YouTube
+
+	@in OtherMedia
+
+	@in Street
+
+	@in City
+
+	@in County
+
+	@in State
+
+	@in Season1Date
+
+	@in Season1Time
+
+	@in Season2Date
+
+	@in Season2Time
+
+	@in Season3Date
+
+	@in Season3Time
+
+	@in Season4Date
+
+	@in Season4Time
+
+	@in Season4Time
+
+	@out MarketName_Trim
+
+	@out Website_Trim
+
+	@out Facebook_Trim
+
+	@out Twitter_Trim
+
+	@out YouTube_Trim
+
+	@out OtherMedia_Trim
+
+	@out Street_Trim
+
+	@out City_Trim
+
+	@out County_Trim
+
+	@out State_Trim
+
+	@out Season1Date_Trim
+
+	@out Season1Time_Trim
+
+	@out Season2Date_Trim
+
+	@out Season2Time_Trim
+
+	@out Season3Date_Trim
+
+	@out Season3Time_Trim
+
+	@out Season4Date_Trim
+
+	@out Season4Time_Trim
+
+	@out Season4Time_Trim
+	
+	@end TrimWs
+	
+	
+	@begin CollapseSpaces @desc Collapse consecutive white space
+	
+	@in MarketName_Trim
+
+	@in Website_Trim
+
+	@in Facebook_Trim
+
+	@in Twitter_Trim
+
+	@in YouTube_Trim
+
+	@in OtherMedia_Trim
+
+	@in Street_Trim
+
+	@in City_Trim
+
+	@in County_Trim
+
+	@in State_Trim
+
+	@in Season1Date_Trim
+
+	@in Season1Time_Trim
+
+	@in Season2Date_Trim
+
+	@in Season2Time_Trim
+
+	@in Season3Date_Trim
+
+	@in Season3Time_Trim
+
+	@in Season4Date_Trim
+
+	@in Season4Time_Trim
+
+	@in Season4Time_Trim
+
+	@out MarketName_Collapsed
+
+	@out Website_Collapsed
+
+	@out Facebook_Collapsed
+
+	@out Twitter_Collapsed
+
+	@out YouTube_Collapsed
+
+	@out OtherMedia_Collapsed
+
+	@out Street_Collapsed
+
+	@out City_Collapsed
+
+	@out County_Collapsed
+
+	@out State_Collapsed
+
+	@out Season1Date_Collapsed
+
+	@out Season1Time_Collapsed
+
+	@out Season2Date_Collapsed
+
+	@out Season2Time_Collapsed
+
+	@out Season3Date_Collapsed
+
+	@out Season3Time_Collapsed
+
+	@out Season4Date_Collapsed
+
+	@out Season4Time_Collapsed
+
+	@out Season4Time_Collapsed
+
+	@end CollapseSpaces
+	
+	
+	@begin Cluster @desc Cluster cells with similar text
+
+    @in MarketName_Collapsed
+
+    @in City_Collapsed
+
+    @in County_Collapsed
+
+    @out MarketName_Cluster
+	
+	@out City_Cluster
+
+    @out County_Cluster
+
+    @end Cluster
+	
+	@begin SplitColumn @desc split SeasonDate into start and end months
+
+    @in Season1Date_Collapsed
+	
+	@in Season2Date_Collapsed
+		
+	@in Season3Date_Collapsed
+	
+	@in Season4Date_Collapsed
+
+    @out Season1DateStart
+	
+	@out Season2DateStart
+	
+	@out Season3DateStart
+	
+	@out Season4DateStart
+	
+	@out Season1DateEnd
+	
+	@out Season2DateEnd
+	
+	@out Season3DateEnd
+	
+	@out Season4DateEnd
+
+    @end SplitColumn
+
+	@begin numerical @desc change to numerical format
+
+	@in x
+	
+	@in y
+
+	@out x_numeric
+	
+	@out y_numeric
+
+	@end numerical
+	
+	@begin ExportData @desc export clean data out of OpenRefine
+
+	@in MarketName_Cluster
+
+	@in Website_Collapsed
+
+	@in Facebook_Collapsed
+
+	@in Twitter_Collapsed
+
+	@in YouTube_Collapsed
+
+	@in OtherMedia_Collapsed
+
+	@in Street_Collapsed
+
+	@in City_Clustered
+
+	@in County_Clustered 
+
+	@in State_Collapsed
+
+	@in Season1Time_Collapsed
+
+	@in Season2Time_Collapsed
+
+	@in Season3Time_Collapsed
+
+	@in Season4Time_Collapsed
+	
+	@in Season1DateStart
+	
+	@in Season2DateStart
+	
+	@in Season3DateStart
+	
+	@in Season4DateStart
+	
+	@in Season1DateEnd
+	
+	@in Season2DateEnd
+	
+	@in Season3DateEnd
+	
+	@in Season4DateEnd
+
+	@in x_numeric
+
+	@in y_numeric
+
+	@in NoCleaningColumns
+
+# @out farmers_market_clean
+
+# @end export_data
