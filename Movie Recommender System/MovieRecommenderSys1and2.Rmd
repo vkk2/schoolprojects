@@ -1,0 +1,608 @@
+---
+title: "R Notebook"
+output: 
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: TRUE
+
+---
+
+## Objective
+
+In thie project MovieLens 1M Dataset was used to build two components:
+
+- System I: Recommendation based on Genres. For this system 2 recommendation system were evaluated. First recommendation for System 1 was identifying top 5 highly rated movies by genre. Second recommendation for System 2 was identifying top 5 popular movies by genre.
+
+- System II: For System II collaborative recomend system was built to evaluate recommendation algorithms as user-based, item-based or SVD.
+
+
+## System I-Recommendation by Genre
+
+For this system top 5 highly rated movies by genre and top 5 popular movies would be proposed.
+
+### Data Preperation and Analysis
+
+Data is split across 3 tables for Ratings, Movies, and User. Each of these were read with code below and appropriate column names were assigned.
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(recommenderlab)
+library(DT)
+library(data.table)
+library(reshape2)
+
+myurl = "https://liangfgithub.github.io/MovieData/"
+
+#Read in Ratings dataset
+# use colClasses = 'NULL' to skip columns
+ratings = read.csv(paste0(myurl, 'ratings.dat?raw=true'), 
+                   sep = ':',
+                   colClasses = c('integer', 'NULL'), 
+                   header = FALSE)
+colnames(ratings) = c('UserID', 'MovieID', 'Rating', 'Timestamp')
+
+#Read in movies dataset
+movies = readLines(paste0(myurl, 'movies.dat?raw=true'))
+movies = strsplit(movies, split = "::", fixed = TRUE, useBytes = TRUE)
+movies = matrix(unlist(movies), ncol = 3, byrow = TRUE)
+movies = data.frame(movies, stringsAsFactors = FALSE)
+colnames(movies) = c('MovieID', 'Title', 'Genres')
+movies$MovieID = as.integer(movies$MovieID)
+
+# convert accented characters
+#movies$Title[73]
+movies$Title = iconv(movies$Title, "latin1", "UTF-8")
+#movies$Title[73]
+
+# extract year
+movies$Year = as.numeric(unlist(
+  lapply(movies$Title, function(x) substr(x, nchar(x)-4, nchar(x)-1))))
+
+# Read in Users dataset
+users = read.csv(paste0(myurl, 'users.dat?raw=true'),
+                 sep = ':', header = FALSE)
+users = users[, -c(2,4,6,8)] # skip columns
+colnames(users) = c('UserID', 'Gender', 'Age', 'Occupation', 'Zip-code')
+```
+
+
+
+To evaluate movie by genre first indicator is created for 18 genres for each of the movie. Each Movie can have multiple genre's listed so first remove the '|' and then create a matrix of movies x genre where number of rows are movies and columns are genre. Binary Matrix is created where 0 indicating respective movie is not that genre specified by respective column name, and 1 indicate row for respective movies is the genre specified by respective column name.
+
+```{r}
+genres = as.data.frame(movies$Genres, stringsAsFactors=FALSE)
+tmp = as.data.frame(tstrsplit(genres[,1], '[|]',
+                              type.convert=TRUE),
+                    stringsAsFactors=FALSE)
+genre_list = c("Action", "Adventure", "Animation", 
+               "Children's", "Comedy", "Crime",
+               "Documentary", "Drama", "Fantasy",
+               "Film-Noir", "Horror", "Musical", 
+               "Mystery", "Romance", "Sci-Fi", 
+               "Thriller", "War", "Western")
+m = length(genre_list)
+genre_matrix = matrix(0, nrow(movies), length(genre_list))
+for(i in 1:nrow(tmp)){
+  genre_matrix[i,genre_list %in% tmp[i,]]=1
+}
+colnames(genre_matrix) = genre_list
+remove("tmp", "genres")
+```
+
+To visulaize how movies behave for each genre will look at Histograms of the 18 genres based on $movies$ or based on $ratings$
+
+```{r}
+data.frame(Genres = genre_list, 
+                 Freq = as.vector(colMeans(genre_matrix))) %>% 
+  ggplot(aes(reorder(Genres, Freq), Freq, fill = Freq)) + 
+  geom_bar(stat = "identity") + 
+    geom_text(aes(label = round(Freq, dig=2)), 
+            position = position_stack(vjust = 0.5), 
+            color="white", size=3) + 
+  coord_flip() + 
+  scale_colour_brewer(palette="Set1") + 
+  labs(y = 'Frequency', x = 'Genre') +
+  ggtitle("Distribution of Genre")
+```
+
+Plot above show Drama Genre is the most rated of all.
+
+### Recommendation Scheme 1: Top 5 Highly Rated Movies By Genre
+
+To create a top 5 highly rated movie by genre we want to make sure not only is the movie had high ratings it was also rated by large number of users. To clearly define highly rated movies we only consider movies which has greater than 1000 ratings and the movies are sorted in decreasing order of their average rating.
+
+First will join Binary Genre Matrix with MovieID so that data frame is created with Movie and then data is filtered to consider movies with ratings of >1000.
+```{r}
+tmp = ratings %>% 
+  left_join(data.frame(MovieID = movies$MovieID, genre_matrix), 
+            by = "MovieID") %>%
+  select(-c("UserID", "Rating", "Timestamp")) %>% distinct(MovieID,.keep_all = TRUE)
+#tmp[1:5,1:5]
+```
+
+
+```{r}
+tmp2=ratings %>% 
+  group_by(MovieID) %>% 
+  summarize(ratings_per_movie = n(), 
+            ave_ratings = round(mean(Rating), dig=3)) %>%
+  inner_join(movies, by = 'MovieID') %>%
+  filter(ratings_per_movie > 1000) %>%
+  select(-c("ratings_per_movie","Genres","Year"))
+#head(tmp2)
+```
+
+Inner Join the above 2 data frames by MovieID and then sort by decreasing average ratings.
+```{r}
+genre_ratingdf=tmp %>%
+  inner_join(tmp2,by='MovieID') 
+genre_ratingdf=genre_ratingdf[order(-genre_ratingdf$ave_ratings),]
+#head(genre_ratingdf)
+```
+
+Write the Sorted data in a CSV file which will be read by shinnyApp and report Top 5 highly rated Movies.
+```{r}
+write.csv(genre_ratingdf,"genre_rating.csv")
+```
+
+Below is a simple test of Top 5 Highly Rated Action Movies
+```{r}
+Top5HighlyRatedAction=genre_ratingdf %>% filter(Action==1)
+Top5HighlyRatedAction$Title[1:5]
+```
+
+### Recommendation Scheme 2: Top 5 Most Popular movies by Genre
+
+To clearly define Popular in this context means receiving many ratings.Difference between popular and higly rated is popular means strictly number of ratings independent of if movie was marked as rating of 5 or 1.
+
+To achieve popular movies will join genre matrix with movieID and then summed up all by number of ratings and sorted in decreasing order.
+
+```{r}
+tmp = ratings %>% 
+  left_join(data.frame(MovieID = movies$MovieID, genre_matrix), 
+            by = "MovieID") %>%
+  select(-c("UserID", "Rating", "Timestamp")) %>% distinct(MovieID,.keep_all = TRUE)
+```
+
+```{r}
+tmp2=ratings %>% 
+  group_by(MovieID) %>% 
+  summarize(ratings_per_movie = n()) %>%
+  inner_join(movies, by = 'MovieID') 
+```
+
+
+```{r}
+genre_populardf=tmp %>%
+  inner_join(tmp2,by='MovieID') 
+genre_populardf=genre_populardf[order(-genre_populardf$ratings_per_movie),]
+head(genre_populardf)
+```
+
+Below is a simple test of Top 5 Popular movies
+```{r}
+Top5PopularAction=genre_populardf %>% filter(Action==1)
+Top5PopularAction$Title[1:5]
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+genre_ratingdf=read.csv("genre_rating.csv",stringsAsFactors = FALSE)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+for (i in 1:1){
+genrewanted=genre_list[i]
+
+if (genrewanted=="Action")
+  top5=subset(genre_ratingdf, Action==1)$Title[1:5]
+else if (genrewanted=="Adventure")
+  top5=subset(genre_ratingdf, Adventure==1)$Title[1:5]
+else if (genrewanted=="Animation")
+  top5=subset(genre_ratingdf, Animation==1)$Title[1:5]
+else if (genrewanted=="Children's")
+  top5=subset(genre_ratingdf, Children.s==1)$Title[1:5]
+else if (genrewanted=="Comedy")
+  top5=subset(genre_ratingdf, Comedy==1)$Title[1:5]
+else if (genrewanted=="Crime")
+  top5=subset(genre_ratingdf, Crime==1)$Title[1:5]
+else if (genrewanted=="Documentary")
+  top5=subset(genre_ratingdf, Documentary==1)$Title[1:5]
+else if (genrewanted=="Drama")
+  top5=subset(genre_ratingdf, Drama==1)$Title[1:5]
+else if (genrewanted=="Fantasy")
+  top5=subset(genre_ratingdf, Fantasy=1)$Title[1:5]
+else if (genrewanted=="Film-Noir")
+  top5=subset(genre_ratingdf, Film.Noir==1)$Title[1:5]
+else if (genrewanted=="Horror")
+  top5=subset(genre_ratingdf, Horror==1)$Title[1:5]
+else if (genrewanted=="Musical")
+  top5=subset(genre_ratingdf, Musical==1)$Title[1:5]
+else if (genrewanted=="Mystery")
+  top5=subset(genre_ratingdf, Mystery==1)$Title[1:5]
+else if (genrewanted=="Romance")
+  top5=subset(genre_ratingdf, Romance==1)$Title[1:5]
+else if (genrewanted=="Sci-Fi")
+  top5=subset(genre_ratingdf, Sci.Fi==1)$Title[1:5]
+else if (genrewanted=="Action")
+  top5=subset(genre_ratingdf, Action==1)$Title[1:5]
+else if (genrewanted=="Thriller")
+  top5=subset(genre_ratingdf, Thriller==1)$Title[1:5]
+else if (genrewanted=="War")
+  top5=subset(genre_ratingdf, War==1)$Title[1:5]
+else if (genrewanted=="Western")
+  top5=subset(genre_ratingdf, Western==1)$Title[1:5]
+print(genrewanted)
+print(top5)
+
+}
+```
+
+
+```{r eval=FALSE, include=FALSE}
+for (i in 1:1){
+genrewanted=genre_list[i]
+#genre_list = c("Action", "Adventure", "Animation", 
+ #              "Children's", "Comedy", "Crime",
+#               "Documentary", "Drama", "Fantasy",
+#               "Film-Noir", "Horror", "Musical", 
+ #              "Mystery", "Romance", "Sci-Fi", 
+#               "Thriller", "War", "Western")
+if (genrewanted=="Action")
+  top5=subset(genre_ratingdf, Action==1)[1:5]
+else if (genrewanted=="Adventure")
+  top5=subset(genre_ratingdf, Adventure==1)[1:5]
+else if (genrewanted=="Animation")
+  top5=subset(genre_ratingdf, Animation==1)[1:5]
+else if (genrewanted=="Children's")
+  top5=subset(genre_ratingdf, Children.s==1)[1:5]
+else if (genrewanted=="Comedy")
+  top5=subset(genre_ratingdf, Comedy==1)[1:5]
+else if (genrewanted=="Crime")
+  top5=subset(genre_ratingdf, Crime==1)[1:5]
+else if (genrewanted=="Documentary")
+  top5=subset(genre_ratingdf, Documentary==1)[1:5]
+else if (genrewanted=="Drama")
+  top5=subset(genre_ratingdf, Drama==1)[1:5]
+else if (genrewanted=="Fantasy")
+  top5=subset(genre_ratingdf, Fantasy=1)[1:5]
+else if (genrewanted=="Film-Noir")
+  top5=subset(genre_ratingdf, Film.Noir==1)[1:5]
+else if (genrewanted=="Horror")
+  top5=subset(genre_ratingdf, Horror==1)[1:5]
+else if (genrewanted=="Musical")
+  top5=subset(genre_ratingdf, Musical==1)[1:5]
+else if (genrewanted=="Mystery")
+  top5=subset(genre_ratingdf, Mystery==1)[1:5]
+else if (genrewanted=="Romance")
+  top5=subset(genre_ratingdf, Romance==1)[1:5]
+else if (genrewanted=="Sci-Fi")
+  top5=subset(genre_ratingdf, Sci.Fi==1)[1:5]
+else if (genrewanted=="Action")
+  top5=subset(genre_ratingdf, Action==1)[1:5]
+else if (genrewanted=="Thriller")
+  top5=subset(genre_ratingdf, Thriller==1)[1:5]
+else if (genrewanted=="War")
+  top5=subset(genre_ratingdf, War==1)[1:5]
+else if (genrewanted=="Western")
+  top5=subset(genre_ratingdf, Western==1)[1:5]
+
+print(genrewanted)
+print(top5)
+
+}
+```
+
+
+```{r eval=FALSE, include=FALSE}
+genre_ratingdf=read.csv("genre_rating.csv",stringsAsFactors = FALSE)
+```
+
+```{r eval=FALSE, include=FALSE}
+Top5HighlyRatedAction=genre_ratingdf %>% filter(Action==1)
+#top5df1=df1[1:5,]
+```
+
+```{r eval=FALSE, include=FALSE}
+small_image_url = "https://liangfgithub.github.io/MovieImages/"
+df1 %>%
+top_n(10, ave_ratings) %>%
+mutate(Image = paste0('<img src="', 
+                        small_image_url, 
+                        MovieID, 
+                        '.jpg?raw=true"></img>')) %>%
+  select('Image', 'Title','ave_ratings') %>%
+   arrange(desc(ave_ratings)) %>%
+  datatable(class = "nowrap hover row-border", 
+            escape = FALSE, 
+            options = list(dom = 't',
+                          scrollX = TRUE, autoWidth = TRUE))
+```
+
+
+
+## System II - Collaborative Recommendation System 
+
+```{r message=FALSE, warning=FALSE}
+library(recommenderlab)
+library(Matrix)
+library(ggplot2)
+library(dplyr)
+```
+
+Load the ratings data from github and convert format to a RatingMatrix such that users represent rows and columns represent movies
+```{r}
+
+myurl = "https://liangfgithub.github.io/MovieData/"
+  
+ratings = read.csv(paste0(myurl, 'ratings.dat?raw=true'), 
+                   sep = ':',
+                   colClasses = c('integer', 'NULL'), 
+                   header = FALSE)
+colnames(ratings) = c('UserID', 'MovieID', 'Rating', 'Timestamp')
+ratings$Timestamp = NULL
+  
+i = paste0('u', ratings$UserID)
+j = paste0('m', ratings$MovieID)
+x = ratings$Rating
+tmp = data.frame(i, j, x, stringsAsFactors = T)
+Rmat = sparseMatrix(as.integer(tmp$i), as.integer(tmp$j), x = tmp$x)
+rownames(Rmat) = levels(tmp$i)
+colnames(Rmat) = levels(tmp$j)
+Rmat = new('realRatingMatrix', data = Rmat)
+#as(Rmat, 'matrix')[1:3, 1:10]
+#ratingmat_norm=Rmat
+
+```
+
+To understand user behaviour on how ratings are distributed plot distribution of rating
+
+```{r}
+
+tmp = data.frame(Rating = 1:5, 
+                 freq = as.vector(table(ratings$Rating)/nrow(ratings)))
+ggplot(data = tmp, aes(x = Rating, y = freq)) +
+  geom_bar(stat="identity", fill = 'steelblue', width = 0.6) + 
+  geom_text(aes(label=round(freq, dig=2)), 
+                vjust=1.6, color="white", size=3.5) +
+  theme_minimal()
+```
+
+### Models Considered
+
+We will evaluate User Based collabrative Filter(UBCF), Item Based Collabrative Filter(IBCF), SVD(Singular Value Decomposition).
+
+- UBCF: In User-Based Collaborative Filtering (UBCF), items are recommended assuming that users with similar preferences will rate items similarly. 
+
+- IBCF: In Item-Based Collaborative Filtering (IBCF), the presumption is that users will prefer items that are similar to other items they like.
+
+- SVD: This is another Collabortive Filtering algorithm. SVD is a matrix factorization technique that is usually used to reduce the number of features of a data set by reducing space dimensions from N to K where K < N. For the purpose of the recommendation systems however, we are only interested in the matrix factorization part keeping same dimensionality. The matrix factorization is done on the user-item ratings matrix. From a high level, matrix factorization can be thought of as finding 2 matrices whose product is the original matrix. Expecting rating is determined by dot products of the two vectors such that the dot product of those 2 vectors is the expected rating
+
+
+
+
+
+### Normalization
+From the distribution above the ratings is left skewed which means that many users tend to give rather good ratings. To compensate for this skewness, we will normalize the data and will be specified as a parameter. z-score normalization method was used here.
+
+### Train/Test Split Method
+
+For this analysis 10 fold cross validation was used. Matrix is split into 10 sets of approximately the same size. Then this is evaluated 10 times using one fold for testing and all others for learning. For tuning, instead of cross validation just 80/20 split was used. The reason for using this was due to speed. For tuning across multiple values cross validation was taking too long. 
+
+### Similarity Matrix Tuning
+
+Using the code below it was  it was determined cosine similarity Method was much better compare to jaccard. Due to the long run time the code below is set to not run.
+
+```{r eval=FALSE, include=TRUE}
+eval_sets <- evaluationScheme(data = Rmat, method = "split", train=0.8,
+    given = 5, goodRating = 4)
+
+similaritymodels<-list(
+  UBCF_cos=list(name="UBCF", param=list(method="cosine")),
+  UBCF_jac=list(name="UBCF", param=list(method="jaccard"))
+)
+st=Sys.time()
+similarity_results<-evaluate(eval_sets,method=similaritymodels,n=c(2,4,10))
+print(Sys.time()-st)
+plot(similarity_results,annotate=1,legend="topleft")
+title("ROC Curve")
+```
+
+
+### Nearest Neighbor Parameter Tuning
+
+To find which value to use for nearest neigbor below code was used to determine Nearest neighbor. A value of Nearest Neighbor=40. Note: this code is set not to run to avoid long knit time.
+
+```{r eval=FALSE, include=TRUE}
+vector_nn<-c(10,20,40)
+nnmodels<-lapply(vector_nn,function(n){
+  list(name="UBCF",param=list(method="jaccard",nn=n))
+})
+names(nnmodels)<-paste0("UBCF_nn_",vector_nn)
+nn_results<-evaluate(eval_sets,method=nnmodels,n=c(2,4,10))
+plot(nn_results,annotate=1,legend="topleft")
+title("ROC Curve")
+```
+
+
+### IBCF K tuning
+
+Below code was used to determine k value to use for IBCF. Choose a value of k=10
+
+```{r eval=FALSE, include=TRUE}
+vector_k<-c(5,10,20,40)
+kmodels<-lapply(vector_k,function(n){
+  list(name="IBCF",param=list(method="jaccard",k=n))
+})
+names(kmodels)<-paste0("IBCF_k_",vector_k)
+kk_results<-evaluate(eval_sets,method=kmodels,n=c(2,4,10))
+plot(kk_results,annotate=1,legend="topleft")
+title("ROC Curve")
+
+```
+
+
+### SVD K Parameter Tuning
+
+From the code below it was determined K=20 is the best choice for SVD.
+```{r eval=FALSE, include=TRUE}
+
+vector_k<-c(5,10,20,40)
+kmodels<-lapply(vector_k,function(n){
+  list(name="SVD",param=list(k=n))
+})
+names(kmodels)<-paste0("SVD_k_",vector_k)
+kk_results<-evaluate(eval_sets,method=kmodels,n=c(2,4,10))
+plot(kk_results,annotate=1,legend="topleft")
+title("ROC Curve")
+
+```
+
+
+
+### Model Build and evaluation
+
+```{r}
+set.seed(100)
+
+nFold <- 10  
+itemsGiven <- 5  
+ratingsThreshold <- 4  # 4 and up are considered good
+itemsRecommend<-10
+
+
+```
+
+
+Setup Train/Test Setup to evaluate each model
+
+```{r}
+eval_sets <- evaluationScheme(data = Rmat, method = "cross-validation", k = nFold,
+    given = itemsGiven, goodRating = ratingsThreshold)
+
+evaltrain <- getData(eval_sets, "train")  
+testknown <- getData(eval_sets, "known")  
+testunknown <- getData(eval_sets, "unknown")  
+```
+
+
+Setup respective parameters for UBCF, IBCF and SVD
+```{r}
+modelParameters <- list(method = "cosine", normalize='z-score', nn=40)
+ibcf_modelParameters <- list(method = "cosine", normalize='z-score', k=10)
+svdparameters<-list(normalize="z-score",k=20)
+```
+
+Evaluate User Based Collabarative Filtering
+```{r}
+ubcf=Recommender(data = evaltrain, method = "UBCF", parameter = modelParameters)
+ubcf_predict<-predict(ubcf,testknown,n=itemsRecommend, type="ratings")
+ubcf_error<-calcPredictionAccuracy(ubcf_predict,testunknown)
+ubcf_error
+```
+
+Evaluate Item Based Collabrative Filtering
+```{r}
+st=Sys.time()
+ibcf=Recommender(data = evaltrain, method = "IBCF", parameter = ibcf_modelParameters)
+ibcf_predict<-predict(ibcf,testknown,n=itemsRecommend, type="ratings")
+ibcf_error<-calcPredictionAccuracy(ibcf_predict,testunknown)
+et=Sys.time()
+#print(et-st)
+ibcf_error
+```
+
+
+Evaluate SVD collabrative filtering
+```{r}
+svd=Recommender(data = evaltrain, method = "SVD", parameter = svdparameters)
+svd_predict<-predict(svd,testknown,n=itemsRecommend, type="ratings")
+svd_error<-calcPredictionAccuracy(svd_predict,testunknown)
+svd_error
+```
+
+```{r}
+st2=Sys.time()
+eval_sets_fast <- evaluationScheme(data = Rmat, method = "split", train=0.8,
+    given = 5, goodRating = 4)
+algorithms<-list(UBCF=list(name="UBCF"),SVD=list(name="SVD")
+                 ,IBCF=list(name="IBCF"))
+ModelStrength<-evaluate(eval_sets_fast,algorithms,n=c(5,10,15,20))
+et2=Sys.time()
+```
+
+ROC plot is used below to plot recall(True positive rate) and fallout(false positive rate) for increasing recommendation set size. True positive are items that showed in Top-N list that match what the user preferred in held-out testing set. False positive are the items in the Top-N list that don't match preferred items in held out testing set
+```{r}
+plot(ModelStrength,annotate=1,legend="topleft", main="ROC of various models")
+```
+
+
+```{r}
+error <- rbind(
+    UBCF = ubcf_error,
+    IBCF=ibcf_error,
+    SVD=svd_error
+    )
+error %>% round(3) %>% knitr::kable(caption = "Error Metrics for various models",format = "html", booktabs = T) %>% 
+  column_spec(column = 1:2, width = "0.5in")
+```
+
+### Model Selection
+
+From evaluation of RMSE of each model SVD has the least RMSE with SVD. Even though UBCF and SVD have RMSE which are close based on ROC curve SVD is a better choice hence model method of SVD was choosen. 
+Additionally, at the cost of a slight deterioration in ratings accuracy, we believe movie viewers would benefit from additional diversity in movie recommendations, especially for less popular movies.
+
+Below code will write RDS file for this SVD model which will be used by the ShinyApp.
+```{r}
+trainedmodel=Recommender(data = Rmat, method = "SVD", parameter = svdparameters)
+saveRDS(trainedmodel, file = "trainedmodel.rds")
+```
+
+```{r}
+tm=readRDS("trainedmodel.rds")
+```
+
+
+### Simple Test Case
+
+```{r echo=TRUE}
+Rmat_ex=matrix(NA,3706)
+Rmat_ex[1]=5
+Rmat_ex[2]=5
+Rmat_ex <- as(t(Rmat_ex), "realRatingMatrix")
+```
+
+```{r echo=TRUE}
+myurl = "https://liangfgithub.github.io/MovieData/"
+movies = readLines(paste0(myurl, 'movies.dat?raw=true'))
+movies = strsplit(movies, split = "::", fixed = TRUE, useBytes = TRUE)
+movies = matrix(unlist(movies), ncol = 3, byrow = TRUE)
+movies = data.frame(movies, stringsAsFactors = FALSE)
+colnames(movies) = c('MovieID', 'Title', 'Genres')
+movies$MovieID = as.integer(movies$MovieID)
+```
+
+```{r echo=TRUE}
+#Rmat_ex=Rmat[1:5]
+ubcf_top10_predict <- predict(object = tm, newdata = Rmat_ex, n = 10, 
+    type = "topNList")
+recom_list=as(ubcf_top10_predict,"list")
+recom_result<-matrix(0,10)
+for (i in 1:10){
+  #recom_result[i]=as.character(subset(movies,movies$MovieID=="233")$Title)
+  recom_result[i]=as.character(subset(movies,movies$MovieID==as.integer(substring(recom_list[[1]][i],first=2)))$Title)
+}
+recom_result
+```
+
+
+```{r eval=FALSE, include=FALSE}
+as(ubcf_top10_predict,"matrix")[1,1:3076]
+```
+
+
+
