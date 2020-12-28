@@ -1,0 +1,325 @@
+---
+title: "Project 2: Walmart Store Sales Forcasting"
+date: "Fall 2020"
+output:
+  html_notebook:
+    theme: readable
+    toc: TRUE
+    toc_float: TRUE
+---
+
+Historical sales data for 45 Walmart stores located in different regions is provided. Each store contains many departments. The goal is to predict the future weekly sales for each department in each store based on the historical data.
+
+## Source
+
+You can find relevant information and useful discussion and sample code on Kaggle [https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting](https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting). Note that **ONLY** the training data is used in this project and our evaluation procedure is **different** from the one on Kaggle.
+
+
+## Datasets
+
+Download the zip file, `train.csv.zip`. Then use the following code to generate datasets  for this project. 
+
+```{r eval=, message=FALSE, warning=FALSE}
+library(lubridate)
+library(tidyverse)
+
+# read raw data and extract date column
+train_raw <- readr::read_csv(unz('train.csv.zip', 'train.csv'))
+train_dates <- train_raw$Date
+
+# training data from 2010-02 to 2011-02
+start_date <- ymd("2010-02-01")
+end_date <- start_date %m+% months(13)
+
+# split dataset into training / testing
+train_ids <- which(train_dates >= start_date & train_dates < end_date)
+train = train_raw[train_ids, ]
+test = train_raw[-train_ids, ]
+
+# create the initial training data
+readr::write_csv(train, 'train_ini.csv')
+
+# create test.csv 
+# removes weekly sales
+test %>% 
+  select(-Weekly_Sales) %>% 
+  readr::write_csv('test.csv')
+
+# create 10-fold time-series CV
+num_folds <- 10
+test_dates <- train_dates[-train_ids]
+
+# month 1 --> 2011-03, and month 20 --> 2012-10.
+# Fold 1 : month 1 & month 2, Fold 2 : month 3 & month 4 ...
+for (i in 1:num_folds) {
+    # filter fold for dates
+    start_date <- ymd("2011-03-01") %m+% months(2 * (i - 1))
+    end_date <- ymd("2011-05-01") %m+% months(2 * (i - 1))
+    test_fold <- test %>%
+        filter(Date >= start_date & Date < end_date)
+    
+    # write fold to a file
+    readr::write_csv(test_fold, paste0('fold_', i, '.csv'))
+}
+```
+
+The code above will generate the following files:
+
+* **train_ini.csv**: 5 columns ("Store", "Dept", "Date", "Weekly_Sales", "IsHoliday"), same as the train.csv file on Kaggle but ranging from 2010-02 to 2011-02.
+
+* **test.csv**: 4 columns ("Store", "Dept", "Date", "IsHoliday"), in the same format as the train.csv file on Kaggle ranging from 2011-03 to 2012-10 with the "Weekly_Sales" column being removed.
+
+* **fold_1.csv**, ..., **fold_10.csv**: 5 columns ("Store", "Dept", "Date", "Weekly_Sales", "IsHoliday"), same as the train.csv file on Kaggle, and one for every two months starting from 2011-03 to 2012-10.
+
+
+## Goal
+
+The file, train_ini.csv, provides the weekly sales data for various stores and departments from 2010-02 (February 2010) to 2011-02 (February 2011).
+
+Given train_ini.csv, the data till 2011-02, need to predict the weekly sales for 2011-03 and 2011-04. Then you'll be provided with the weekly sales data for 2011-03 and 2011-04 (fold_1.csv), and you need to predict the weekly sales for 2011-05 and 2011-06, and so on:
+
+* `t = 1`, predict 2011-03 to 2011-04 based on data from 2010-02 to 2011-02 (train_ini.csv); 
+* `t = 2`, predict 2011-05 to 2011-06 based on data from 2010-02 to 2011-04 (train_ini.csv, fold_1.csv);
+* `t = 3`, predict 2011-07 to 2011-08 based on data from 2010-02 to 2011-06 (train_ini.csv, fold_1.csv, fold_2.csv);
+* ......
+* `t = 10`, predict 2011-09 to 2011-08 baesd on data from 2010-02 to 2011-08 (train_ini.csv, fold_1.csv, fold_2.csv, ..., fold_9.csv)
+
+## Models
+
+```{r}
+naive = function(){
+  if (t>1){
+    train <<- train %>% add_row(new_train)
+  }
+  
+  start_date <- ymd("2011-03-01") %m+% months(2 * (t - 1))
+  end_date <- ymd("2011-05-01") %m+% months(2 * (t - 1))
+  test_current <- test %>%
+    filter(Date >= start_date & Date < end_date) %>%
+    select(-IsHoliday)
+  
+  most_recent_date <- max(train$Date)
+  tmp_train <- train %>%
+    filter(Date == most_recent_date) %>%
+    rename(Weekly_Pred = Weekly_Sales) %>%
+    select(-Date, -IsHoliday)
+  
+  test_pred <- test_current %>%
+    left_join(tmp_train, by = c('Dept', 'Store')) 
+  return(test_pred)
+}
+```
+
+```{r}
+linearmodelmethod = function(){
+  
+  start_date <- ymd("2011-03-01") %m+% months(2 * (t - 1))
+  end_date <- ymd("2011-05-01") %m+% months(2 * (t - 1))
+  test_current <- test %>%
+    filter(Date >= start_date & Date < end_date) %>%
+    select(-IsHoliday)
+  
+  if (t>1){
+    train <<- train %>% add_row(new_train)
+  }
+  # not all depts need prediction
+  test_depts <- unique(test_current$Dept)
+  test_pred <- NULL
+  
+  for(dept in test_depts){
+    train_dept_data <- train %>% filter(Dept == dept)
+    test_dept_data <- test_current %>% filter(Dept == dept)
+    
+    # no need to consider stores that do not need prediction
+    # or do not have training samples
+    train_stores <- unique(train_dept_data$Store)
+    test_stores <- unique(test_dept_data$Store)
+    test_stores <- intersect(train_stores, test_stores)
+    
+    for(store in test_stores){
+      tmp_train <- train_dept_data %>% 
+        filter(Store == store) %>%
+        mutate(Wk = ifelse(year(Date) == 2010, week(Date)-1, week(Date))) %>%
+        mutate(Yr = year(Date))
+      tmp_test <- test_dept_data %>% 
+        filter(Store == store) %>%
+        mutate(Wk = ifelse(year(Date) == 2010, week(Date)-1, week(Date))) %>%
+        mutate(Yr = year(Date)) 
+      
+      tmp_train$Wk = factor(tmp_train$Wk, levels = 1:52)
+      tmp_test$Wk = factor(tmp_test$Wk, levels = 1:52)
+      
+      train_model_matrix <- model.matrix(~ Yr + Wk, tmp_train)
+      test_model_matrix <- model.matrix(~ Yr + Wk, tmp_test)
+      mycoef <- lm(tmp_train$Weekly_Sales ~ train_model_matrix)$coef
+      mycoef[is.na(mycoef)] <- 0
+      tmp_pred <- mycoef[1] + test_model_matrix %*% mycoef[-1]
+      
+      tmp_test_wk <- tmp_test
+      test_pred_wk <- test_pred
+      
+      tmp_test <- tmp_test %>%
+        mutate(Weekly_Pred = tmp_pred[,1]) %>%
+        #select(-Yr)
+        select(-Yr)
+      test_pred <- test_pred %>% bind_rows(tmp_test)  
+      
+    }
+  }
+  #do a circular shift for fold5
+  if (t==5){
+    test_pred<-shift(test_pred_wk)
+  }
+  
+  #test_pred<-test_pred %>% 
+  # select(-Wk)
+  return(test_pred)
+}
+```
+
+```{r}
+naive2 = function(){
+  
+  start_date <- ymd("2011-03-01") %m+% months(2 * (t - 1))
+  end_date <- ymd("2011-05-01") %m+% months(2 * (t - 1))
+  test_current <- test %>%
+    filter(Date >= start_date & Date < end_date) %>%
+    select(-IsHoliday)
+  
+  if (t>1){
+    train <<- train %>% add_row(new_train)
+  }
+  
+  start_last_year = min(test_current$Date) - 375
+  end_last_year = max(test_current$Date) - 350
+  tmp_train <- train %>%
+    filter(Date > start_last_year & Date < end_last_year) %>%
+    mutate(Wk = ifelse(year(Date) == 2010, week(Date)-1, week(Date))) %>%
+    rename(Weekly_Pred = Weekly_Sales) %>%
+    select(-Date, -IsHoliday)
+  
+  test_current <- test_current %>%
+    mutate(Wk = week(Date))
+  
+  test_pred <- test_current %>%
+    left_join(tmp_train, by = c('Dept', 'Store', 'Wk')) %>%
+    select(-Wk)
+  
+  test_pred <- test_current %>%
+    left_join(tmp_train, by = c('Dept', 'Store', 'Wk')) 
+  #  select(-Wk)
+  ###Add shift
+  if(t==5){
+    test_pred_wk<-test_current %>%
+      left_join(tmp_train, by = c('Dept', 'Store', 'Wk'))
+    
+    test_pred<-shift(test_pred_wk)
+  }
+  return(test_pred)
+}
+```
+
+```{r}
+shift=function(test_pred_wk){
+  
+  weeks2shift=c(49,50,51,52)
+  days2shift=1
+  test_pred_shift<-test_pred_wk
+  for (indx in 1:length(weeks2shift)){
+    prevwk <- test_pred_shift %>%
+      filter(Wk==(weeks2shift[indx]-1)) %>%
+      mutate(offset1=round(Weekly_Pred*days2shift/7,2)) %>%
+      select(-Weekly_Pred, -Date, -Wk)
+    
+    
+    nextwk <- test_pred_shift %>%
+      filter(Wk==(weeks2shift[indx])) %>%
+      mutate(offset2=round(Weekly_Pred*(7-days2shift)/7,2)) %>%
+      select(-Weekly_Pred)
+    
+    combine<-prevwk %>%
+      right_join(nextwk, by = c('Store', 'Dept')) %>%
+      mutate(Weekly_Pred=offset1+offset2) %>%
+      select(-offset1,-offset2)
+    
+    test_pred_shift<-test_pred_shift%>%
+      filter(Wk!=(weeks2shift[indx]))
+    test_pred_shift <- rbind(test_pred_shift,combine)
+    
+  }  
+  
+  return(test_pred_shift)
+}
+```
+
+```{r}
+mypredict=function(){
+  linear_pred=linearmodelmethod()
+  linear_pred<-linear_pred %>% select(-Wk)
+  snaive_pred=naive2()
+  snaive_pred<-snaive_pred%>% select(-Wk)
+  if((t==4)||(t==5)||(t==6)||(t==10)){
+    test_pred<-linear_pred %>%
+      right_join(snaive_pred, by = c('Store', 'Dept','Date')) %>%
+      mutate(Weekly_Pred=((Weekly_Pred.x+Weekly_Pred.y)/2)) 
+  }
+  else
+    test_pred<-linear_pred
+  return(test_pred)
+}
+```
+
+## Code Evaluation
+
+```{r message=FALSE, warning=FALSE}
+library(lubridate)
+library(tidyverse)
+
+
+#source("mymain.R")
+
+# read in train / test dataframes
+train <- readr::read_csv('train_ini.csv')
+test <- readr::read_csv('test.csv')
+
+# save weighted mean absolute error WMAE
+num_folds <- 10
+wae <- rep(0, num_folds)
+
+for (t in 1:num_folds) {
+  # *** THIS IS YOUR PREDICTION FUNCTION ***
+  test_pred <- mypredict()
+  
+  # load fold file 
+  fold_file <- paste0('fold_', t, '.csv')
+  new_train <- readr::read_csv(fold_file, 
+                               col_types = cols())
+
+  # extract predictions matching up to the current fold
+  scoring_tbl <- new_train %>% 
+      left_join(test_pred, by = c('Date', 'Store', 'Dept'))
+  
+  # compute WMAE
+  actuals <- scoring_tbl$Weekly_Sales
+  preds <- scoring_tbl$Weekly_Pred
+  preds[is.na(preds)] <- 0
+  weights <- if_else(scoring_tbl$IsHoliday, 5, 1)
+  wae[t] <- sum(weights * abs(actuals - preds)) / sum(weights)
+}
+
+print(wae)
+mean(wae)
+```
+
+
+We use the same evaluation metric as the [one described on Kaggle](https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting/overview/evaluation), with higher weihts on holiday weeks. There are four holiday weeks per year:
+
+* Super Bowl
+* Labor Day
+* Thanksgiving
+* Christmas
+
+
+
+
+
