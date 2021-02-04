@@ -8,4 +8,4 @@ The MovieLens 1M Dataset from https://grouplens.org/datasets/movielens/ was used
 
 System 1(By Genre): Recommendation based on genres. It takes the users favorite genre as input and recommend top5 movies based on the selected genre.
 
-System 2(By Rating): Collaborative Filtering techign with Singular Value Decomposition was used. It asks for user to rate (1-5 stars) as many movies as possible before recommending the top10 movies based on the ratings provided.
+System 2(By Rating): Collaborative Filtering technique with Singular Value Decomposition was used. It asks for user to rate (1-5 stars) as many movies as possible before recommending the top10 movies based on the ratings provided.
