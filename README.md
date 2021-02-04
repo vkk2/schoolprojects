@@ -7,4 +7,7 @@
 # My COVID Dashboard
 - This was done in June 2020. https://public.tableau.com/profile/viney.kharbanda#!/vizhome/CS498CovidSubmit/Dashboard
 - Future Work is to update it for current timeline
+# AMES Housing Prediction
+- Multi linear Model to predict house pricing in AMES, IOWA. Incorportes Data exploration, cleaning, variable selection, Model Selection, Evaluation and Interpertation.
+
 
