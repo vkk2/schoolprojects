@@ -1,0 +1,1027 @@
+---
+title: "Data Analysis Project: AMES House Price Prediction"
+author: "Dhanush Harihar, Netid: dhanush2; Viney Kharbanda, Netid:vkk2; Chien Wei Huang, Netid:cwhuang3"
+date: "7/27/2019"
+output:
+  html_document:
+    highlight: tango
+    theme: flatly
+    toc: yes
+  pdf_document:
+    fig_caption: yes
+    highlight: tango
+    toc: yes
+  word_document:
+    toc: yes
+---
+
+***
+
+# Introduction
+
+This document contains data analysis done on AMES House Predicton dataset. The intent of this project is to develop a multi-linear model that can predict house prices(response variable) based on the predictors(rest of the variables) we choose that optimizes the model. The linear model will be developed based on data and selected variables.
+
+This project will incorporate the following concepts:
+
+- Data exploration
+- Data cleaning
+- Variable selection
+- Assumption
+- Transformation
+- Model building
+- Model Selection
+- Model evaluation
+- Interpertation
+
+## Description of dataset
+
+The Ames Housing dataset was compiled by Dean De Cock for use in data science education. The data set describes the sale of individual residential property in Ames, Iowa from 2006 to 2010. 
+
+The data set contains 1460 observations and 81 number of explanatory variables involved in assessing homevalues. The dataset will be randomly split into training data set and testing data set.
+
+Most of the variables are the type of information that a typical home buyer would be interested in knowing about a potential property (e.g. When was it built? How big is the lot? How many bathrooms are there?How many square foot? Is there a pool?)
+
+Below are some of the key variables in the dataset which we are interested in:
+
+**Response**
+
+- `SalePrice`: Response is the sale price and is Numeric.
+
+**Numerical Predictors**
+
+- `GrLivArea` : Above grade (ground) living area square feet 
+- `GarageArea`: Size of garage in square feet
+- `TotalBsmtSF`: Total square feet of basement area
+- `1stFlrSF`: First Floor square feet
+- `OpenPorchSF`: Open porch area in square feet
+- `2ndFlrSF`: Second floor square feet
+- `LotArea`: Lot size in square feet
+
+**Categorical Predictors**
+
+- `OverallQual`: Overall material and finish quality
+- `GarageCars`: Size of garage in car capacity
+- `FullBath`: Full bathrooms above grade
+- `Bedroom`: Bedrooms above grade
+- `Kitchen`: Kitchens above grade
+- `TotRmsAbvGrd`: Total rooms above grade (does not include bathrooms)
+- `OverallCond`: Rates the overall condition of the house
+
+## Dataset Source
+
+This project is inspired by [Kaggle](https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data)
+
+
+## Business Interest
+
+We want to explore what features influence price of the house in AMES, Iowa. Some of questions are:
+
+- Does lot area of the house determine price of house?
+- Does having a enclosed porch improves value of the house?
+- Does having a larger Garage Capacity increases value of the house?
+
+These findings can also help a homeowner decide if a certain rennovation(like adding a pool, porch etc) should be done that will eventually lead to a higher Sale Price.
+
+***
+
+# Methods
+
+Here we show the most relevant R code for analyzing this dataset. See the .Rmd files for additional R code not seen in this document. 
+
+## Load required libraries
+
+```{r, message = FALSE, warning = FALSE, eval = FALSE}
+install.packages("dplyr")
+install.packages("faraway")
+install.packages("lmtest")
+```
+
+```{r, message = FALSE}
+library(dplyr)
+library(lmtest)
+library(faraway)
+library(knitr)
+library(readr)
+```
+
+## Functions to perform model diagnostics
+```{r}
+perform_bp_test = function(model, alpha = '0.05') {
+  decide = unname(bptest(model)$p.value < alpha)
+  ifelse(decide, 
+         "Constant Variance suspect", 
+         "Constant Variance assumption not suspect")
+}
+
+perform_shapiro_wilk_test = function(model, alpha = '0.05') {
+  decide = unname(shapiro.test(resid(model))$p.value < alpha)
+  ifelse(decide, 
+         "Normality assumption suspect", 
+         "Normality assumption not suspect")
+}
+
+get_num_params = function(model) {
+  length(coef(model))
+}
+
+calc_loocv_rmse = function(model, response_in_log = FALSE) {
+  if (response_in_log == TRUE) {
+    y_hat = exp(fitted(model))
+    y = exp(model$model[,1])
+  } else {
+    y_hat = fitted(model)
+    y = model$model[,1]
+  }
+
+  residual =  y - y_hat
+  round(sqrt(mean((residual / (1 - hatvalues(model))) ^ 2)), 3)  
+}
+
+calc_adj_r2 = function(model) {
+  round(summary(model)$adj.r.squared, 3)
+}
+
+calc_r2 = function(model) {
+  round(summary(model)$r.squared, 3)
+}
+
+calc_prediction_error = function(model, newdata, new_response, response_in_log = FALSE) {
+  if (response_in_log == TRUE) {
+    predicted_response = exp(predict(model, newdata = newdata))
+  } else {
+    predicted_response = predict(model, newdata = newdata)
+  }
+  round(mean((abs(predicted_response - new_response) / new_response) * 100), 3)
+}
+
+diagnostics = function(model, pcol = 'grey', lcol = 'dodgerblue', 
+                       alpha = '0.05', plotit = TRUE, testit = TRUE, displayit = FALSE, returnit = TRUE,
+                       response_in_log = FALSE, newdata = NA, new_response = NA) {
+  
+  if (testit == TRUE) {
+    loocv_rmse = calc_loocv_rmse(model, response_in_log)
+    adj_r2 = calc_adj_r2(model)
+    r2 = calc_r2(model)
+    bp_decision = perform_bp_test(model, alpha)
+    sw_decision = perform_shapiro_wilk_test(model, alpha)
+    num_params = get_num_params(model)
+    vif_result = vif(model)
+    num_colinear_columns = sum(vif_result > 5)
+    num_predictors = length(model$model) - 1
+     
+    if (all(is.na(newdata))) {
+      test_error = "Not calculated"
+    } else {
+      test_error = calc_prediction_error(model, newdata, new_response, response_in_log)
+    }
+    
+    if (displayit == TRUE) {
+      print(paste('LOOCV RMSE :', loocv_rmse))
+      print(paste('Adjusted R2:', adj_r2))
+      print(paste('Test Error :', test_error))
+      #print(paste('R2        :', r2))
+      print(paste('Num of predictors:', num_predictors))
+      print(paste('Num of paramaters:', num_params))
+      #print(paste('Num of colinear columns  :', num_colinear_columns))
+      print(paste('BP test decision          :', bp_decision))
+      print(paste('Shapiro Wilk test decision:', sw_decision))
+    }
+    
+    if (plotit == TRUE) {
+      par(mfrow = c(1, 2))
+      plot(fitted(model), resid(model), 
+           col = pcol, pch = 20, xlab = "Fitted", 
+           ylab = "Residuals.", main = "Fitted vs Residuals")
+      abline(h = 0, col = lcol, lwd = 2)
+      
+      qqnorm(resid(model), col = pcol, main = "Normal Q-Q Plot")
+      qqline(resid(model), col = lcol, lwd = 2)
+    }
+
+    if (returnit == TRUE) {
+      list("loocv_rmse" = loocv_rmse, "adj_r2" = adj_r2,
+           "r2" = r2, "bp_decision" = bp_decision,
+           "sw_decision" = sw_decision, "num_params" = num_params,
+           "num_colinear_columns" = num_colinear_columns,
+           "test_error" = test_error, "num_predictors" = num_predictors
+           )
+    }
+  }
+}
+```
+
+## Utility Functions
+```{r}
+update_char_column_value = function(data_frame, column_name, value, 
+                                    update_row_indices = NA, 
+                                    convert_to_factor = TRUE) {
+  
+  data_frame[, column_name] = as.character(data_frame[, column_name])
+  if (all(is.na(update_row_indices))) {
+    data_frame[which(is.na(data_frame[, column_name])), column_name] = value
+  } else {
+    data_frame[update_row_indices, column_name] = value
+  }
+  if (convert_to_factor) {
+    data_frame[, column_name] = as.factor(data_frame[, column_name])
+  }
+  data_frame
+}
+```
+
+## Plotting Functions
+```{r}
+draw_boxplot = function(x = NA, formula = NA, data = NA, xlab = "", 
+                        ylab = "", main = "", horizontal = FALSE, notch = FALSE) {
+  
+  options(scipen = 50, digits = 5) 
+  if (all(is.na(x))) {
+    outliers = boxplot(formula, data, xlab = xlab, ylab = ylab, 
+                       main = main, col = "orange", border = "black",
+                       horizontal = horizontal, notch = notch)$out
+  } else {
+    outliers = boxplot(x = x, xlab = xlab, ylab = ylab, main = main,
+                       col = "orange", border = "black", horizontal = horizontal, notch = notch)$out
+    outliers
+  }
+}
+
+create_table = function(data_frame, col_names, caption = "") {
+  kable(data_frame, col.names = col_names, caption = caption)
+}
+
+draw_corelation_plot = function(data, main = "") {
+  pairs(data, col = "dodgerblue", main=main)
+}
+
+plot_predicted_vs_actual = function(x, y, xlab = "", ylab = "", main = "") {
+  options(scipen = 50, digits = 5) 
+  plot(x = x, y = y, 
+       col = 'darkorange', pch = 20, xlab = xlab, 
+       ylab = ylab, main = main,
+       xlim = c(0,max(x)),
+       ylim = c(0,max(y)))
+  abline(a = 0, b = 1, col = 'dodgerblue', lwd = 2)
+}
+
+
+```
+
+## Load Dataset
+
+```{r message=FALSE, warning=FALSE}
+housing_data = read.csv("housingdata.csv")
+```
+Current dimensions of dataset are `r dim(housing_data)` 
+
+We will look at the data first and do cleaning. Then we do variable selection.
+
+## Clean Data
+
+Analyze data and perform cleaning like remove unusual observations, remove unwanted data, and treat missing data,
+
+### Remove outliers
+
+Detect outliers using univariate approach on response variable `SalePrice`.
+
+```{r, fig.height = 4, fig.width = 10, echo = FALSE}
+outliers = draw_boxplot(
+            x = housing_data$SalePrice, 
+            xlab = "SalePrice", 
+            main = "SalePrice in AMES housing dataset (before outlier removal)",
+            horizontal = TRUE)
+```
+
+The below identified outliers in `SalePrice` are removed.
+
+```{r, echo = FALSE}
+sort(outliers)
+```
+
+```{r, fig.height = 4, fig.width = 10, echo = FALSE}
+housing_data = housing_data[-which(housing_data$SalePrice %in% outliers), ]
+
+outliers = draw_boxplot(
+             x = housing_data$SalePrice, 
+             xlab = "SalePrice", 
+             main = "SalePrice in AMES housing dataset (after outlier removal)",
+             horizontal = TRUE)
+```
+
+### Remove unwanted columns
+
+Remove `Id` column as it is not significant for prediction.
+
+```{r, results = 'hide', echo = FALSE}
+housing_data = housing_data[ , -1]
+```
+
+### Treat missing data
+
+We will investiage at each column and see how we can treat missing data in those columns.
+
+```{r, results = 'hide', echo = FALSE}
+(na_column_indices = which(colSums(is.na(housing_data)) > 0))
+```
+
+```{r, echo = FALSE}
+na_count_per_column = rep(0, length(na_column_indices))
+for (col in 1:length(na_column_indices)) {
+  na_count_per_column[col] = sum(is.na(housing_data[, names(na_column_indices[col])]))
+}
+
+# % of data that is NA
+na_summary = data.frame(column_names = names(na_column_indices), missing_data_percent = (100 * na_count_per_column) / nrow(housing_data))
+
+na_summary = na_summary %>% arrange(desc(missing_data_percent))
+
+create_table(na_summary, c("Column Name", "% of Missing data"), "**Missing Data Summary**")
+```
+
+`PoolQC`, `MiscFeature`, and `Alley` variables have most missing data. 
+
+We will make the below changes based on our investigation.
+
+- `PoolQC` has value `NA` when `PoolArea` is $0$, that means no pool. So mark it `None`.
+
+```{r, results = 'hide', echo = FALSE}
+#all.equal(sum((housing_data$PoolArea==0)),sum(is.na(housing_data$PoolQC)))
+sum(is.na(housing_data[housing_data$PoolArea == 0, "PoolQC"])) / nrow(housing_data)
+update_row_indices = which(housing_data$PoolArea == 0)
+housing_data = update_char_column_value(housing_data, "PoolQC", "None", update_row_indices)
+sum(is.na(housing_data$PoolQC))
+```
+
+- `MiscFeature` is empty when `MiscVal` is $0$. So set `MiscFeature` to `None` when `MiscVal` is $0$.
+
+```{r, results = 'hide', echo = FALSE}
+sum(is.na(housing_data[housing_data$MiscVal == 0,"MiscFeature"])) / nrow(housing_data)
+update_row_indices = which(housing_data$MiscVal == 0)
+housing_data = update_char_column_value(housing_data, "MiscFeature", "None", update_row_indices)
+sum(is.na(housing_data$MiscFeature))
+```
+
+- Looking at data description `NA` in `Alley` mean no alley access. So replace `NA` with `None` in `Alley` column.
+
+```{r, results = 'hide', echo = FALSE}
+sum(is.na(housing_data$Alley))
+housing_data = update_char_column_value(housing_data, "Alley", "None")
+sum(is.na(housing_data$Alley))
+```
+
+- It appears `NA` in `Fence` is no fence, so mark this as `None` also.
+
+```{r, results = 'hide', echo = FALSE}
+sum(is.na(housing_data$Fence))
+housing_data = update_char_column_value(housing_data, "Fence", "None")
+sum(is.na(housing_data$Fence))
+```
+
+- `FireplaceQu` has value `NA` when `Fireplaces` is $0$, that means no fireplace, so mark it `None`.
+
+```{r, results = 'hide', echo = FALSE}
+update_row_indices = which(housing_data$Fireplaces == 0)
+housing_data = update_char_column_value(housing_data, "FireplaceQu", "None", update_row_indices)
+sum(is.na(housing_data$FireplaceQu))
+```
+
+- For `LotFrontage` column, it appears that there is no relationship with other missing `NA`. So see we will replace `NA` with median.
+
+```{r, results = 'hide', echo = FALSE}
+housing_data[which(is.na(housing_data$LotFrontage)), "LotFrontage"] = median(housing_data$LotFrontage, na.rm = TRUE)
+sum(is.na(housing_data$LotFrontage))
+```
+
+- All the garage related columns have same percent of data missing. Perhaps there is no garage. Replace those with `None`.
+
+```{r, results = 'hide', echo = FALSE}
+all.equal(sum((housing_data$GarageArea) == 0),
+          sum(is.na(housing_data$GarageYrBlt)),
+          sum(is.na(housing_data$GarageType)),
+          sum(is.na(housing_data$GarageFinish)),
+          sum(is.na(housing_data$GarageQual)),
+          sum(is.na(housing_data$GarageCond)))
+
+update_row_indices = which(housing_data$GarageArea == 0)
+housing_data = update_char_column_value(housing_data, "GarageType", "None", update_row_indices)
+sum(is.na(housing_data$GarageType))
+
+housing_data = update_char_column_value(housing_data, "GarageYrBlt", "None", update_row_indices)
+sum(is.na(housing_data$GarageYrBlt))
+
+housing_data = update_char_column_value(housing_data, "GarageFinish", "None", update_row_indices)
+sum(is.na(housing_data$GarageFinish))
+
+housing_data = update_char_column_value(housing_data, "GarageQual", "None", update_row_indices)
+sum(is.na(housing_data$GarageQual))
+
+housing_data = update_char_column_value(housing_data, "GarageCond", "None", update_row_indices)
+sum(is.na(housing_data$GarageCond))
+```
+
+- All the basement related columns have similar missing data percentage. Perhaps there is no basement. Replace those with `No Basement`.
+
+```{r, results = 'hide', echo = FALSE}
+housing_data = update_char_column_value(housing_data, "BsmtExposure", "No Basement")
+sum(is.na(housing_data$BsmtExposure))
+
+housing_data = update_char_column_value(housing_data, "BsmtFinType2", "No Basement")
+sum(is.na(housing_data$BsmtFinType2))
+
+housing_data = update_char_column_value(housing_data, "BsmtFinType1", "No Basement")
+sum(is.na(housing_data$BsmtFinType1))
+
+housing_data = update_char_column_value(housing_data, "BsmtQual", "No Basement")
+sum(is.na(housing_data$BsmtQual))
+
+housing_data = update_char_column_value(housing_data, "BsmtCond", "No Basement")
+sum(is.na(housing_data$BsmtCond))
+```
+
+- Missing data for `MasVnrType` and `MasVnrArea` mean those houses do not have masonry veneer walls. So marking `MasVnrType` as `None` and `MasVnrArea` as $0$.
+
+```{r, results = 'hide', echo = FALSE}
+housing_data = update_char_column_value(housing_data, "MasVnrType", "None")
+sum(is.na(housing_data$MasVnrType))
+
+housing_data[which(is.na(housing_data$MasVnrArea)), "MasVnrArea"] = 0
+sum(is.na(housing_data$MasVnrArea))
+```
+
+- One house does not have Electrical Info. Maybe it is not fully built yet. So remove data for this house.
+
+```{r, results = 'hide', echo = FALSE}
+row_remove = which(is.na(housing_data$Electrical))
+housing_data = housing_data[-row_remove,]
+sum(is.na(housing_data$Electrical))
+```
+
+Check if there are any more `NA` values. 
+
+```{r}
+sum(colSums(is.na(housing_data)) > 0)
+```
+
+There are none and we are done with missing data check and data treatment.
+
+Current dimensions of dataset are `r dim(housing_data)`
+
+### Transform Data
+
+Some columns are integer type but should be factors. So convert those columns to factors.
+
+```{r, results = 'hide', echo = FALSE}
+housing_data$MSSubClass=as.factor(housing_data$MSSubClass)
+housing_data$OverallQual=as.factor(housing_data$OverallQual)
+housing_data$OverallCond=as.factor(housing_data$OverallCond)
+#housing_data$YearBuilt=as.factor(housing_data$YearBuilt)
+housing_data$YearRemodAdd=as.factor(housing_data$YearRemodAdd)
+#housing_data$BsmtFullBath=as.factor(housing_data$BsmtFullBath)
+#housing_data$BsmtHalfBath=as.factor(housing_data$BsmtHalfBath)
+#housing_data$FullBath=as.factor(housing_data$FullBath)
+#housing_data$HalfBath=as.factor(housing_data$HalfBath)
+#housing_data$BedroomAbvGr=as.factor(housing_data$BedroomAbvGr)
+#housing_data$KitchenAbvGr=as.factor(housing_data$KitchenAbvGr)
+#housing_data$TotRmsAbvGrd=as.factor(housing_data$TotRmsAbvGrd)
+#housing_data$GarageCars=as.factor(housing_data$GarageCars)
+#housing_data$Fireplaces=as.factor(housing_data$Fireplaces)
+#housing_data$MoSold=as.factor(housing_data$MoSold)
+housing_data$YrSold =as.factor(housing_data$YrSold )
+```
+
+## Variable Selection
+
+
+### Split data into train and test
+
+We will randomly split the data to train and test set before proceeding to next step.
+
+```{r}
+set.seed(420)
+hd_trn_idx  = sample(nrow(housing_data), size = trunc(0.80 * nrow(housing_data)))
+ames_trn_data = housing_data[hd_trn_idx, ]
+ames_tst_data = housing_data[-hd_trn_idx, ]
+```
+
+### Look at Full additive model and Smaller model using BIC parameter selection
+
+Before doing detailed variable selection we want to check how the model with all predictors perform.
+
+We use a full additive model with all parameters and then do variable selection using backwards BIC.
+
+```{r, eval = FALSE}
+model_add = lm(SalePrice ~ . ,data = ames_trn_data)
+model_add_bic = step(model_add, direction = "backward", k = log(nrow(ames_trn_data)), trace = 0)
+(model_add_bic_rmse = calc_loocv_rmse(model_add_bic))
+```
+
+For the model selected using `BIC`, we got LOOCV RMSE = `Inf`. This model is too complicated. 
+
+So need to do detailed variable selection by checking which predictors impact the response variable `SalePrice` the most.
+
+### Analyze and select numerical variables
+
+We will first study numerical columns using correlation.
+
+```{r, echo = FALSE, result = 'hide'}
+numeric_ames_trn_data = Filter(is.numeric, ames_trn_data)
+numeric_count = length(names(numeric_ames_trn_data))
+```
+
+There are $`r numeric_count`$ numerical variables.
+
+Lets us see their corelation with `SalePrice`.
+
+```{r, echo = FALSE}
+sort(cor(numeric_ames_trn_data)["SalePrice", ], decreasing = TRUE)
+```
+
+Next we will pick top 10 variables based on corelation values and study their colinearity and relationship.
+
+```{r, echo = FALSE}
+pick_count = 10
+top_10_names = names(
+                  sort(abs(cor(numeric_ames_trn_data)["SalePrice", ]), decreasing = TRUE
+               ) [1:pick_count])
+```
+
+Lets us display the corelation matrix and plot for these top 10 variables.
+
+```{r, echo = FALSE}
+cor(numeric_ames_trn_data[ , top_10_names])
+```
+
+```{r fig.height = 10, fig.width = 10, echo = FALSE}
+draw_corelation_plot(numeric_ames_trn_data[, top_10_names], 
+      main="Relationships between top 10 numerical corelated predictors in AMES housing data")
+```
+
+From analysis and above plot, it looks like `GarageCars` and `GarageArea` are collinear. `GrLivArea` and `TotRmsAbvGrd` are collinear. `TotalBsmtSF` and `X1stFlrSF` are collinear. Also we need to decide how many parameters to select. 
+
+So find these answers, we will iterate and see how adding more parameters in decreasing order of corelation affects $LOOCV \space RMSE$. 
+
+```{r, echo = FALSE}
+param_count = 20
+```
+
+We do not want the model to be complex. So we start with maximum of `r param_count` parameters selected based on their corelation with `SalePrice`.
+
+```{r}
+loocv_rmse = rep(0, param_count)
+num_params = rep(0, param_count)
+cor_values_descending = sort(abs(cor(numeric_ames_trn_data)["SalePrice",]), decreasing = TRUE)
+for (i in 2:param_count) {
+  topx_col_names = names(cor_values_descending)[1:i] 
+  model = lm(SalePrice ~ ., data = numeric_ames_trn_data[, topx_col_names])
+  loocv_rmse[i] = calc_loocv_rmse(model)
+  num_params[i] = get_num_params(model)
+}
+min_index = which.min(loocv_rmse[2:param_count])
+min_index = min_index + 1
+```
+
+Next we plot $LOOC \space RMSE$ Vs Parameter count we got from the above code on scatter plot.
+
+```{r, fig.height = 5, fig.width = 8, echo = FALSE}
+plot(loocv_rmse[2:param_count] ~ num_params[2:param_count], 
+     xlab = "Parameter Count", ylab = "LOOCV RMSE", 
+     main = "LOOCV RMSE vs Parameter Count", col = "blue")
+```
+
+From plot above, we can see that top `r min_index` number of correlated predictors give the best $LOOC \space RMSE$. 
+
+
+Below we will check to see how a model with these selected variables perform.
+
+```{r}
+top_cor_col_names = names(cor_values_descending)[1:min_index]
+model_numeric = lm(SalePrice ~ ., data = numeric_ames_trn_data[, top_cor_col_names])
+```
+
+Below is the result of diagnostics done on this model:
+
+```{r, fig.width = 10, fig.height = 5, echo = FALSE}
+diag_result_numeric = diagnostics(model_numeric, displayit = TRUE,
+            newdata = ames_tst_data, new_response = ames_tst_data$SalePrice)
+```
+
+Now out of these `r min_index` predictors remove collinear variables.
+
+```{r, echo = FALSE}
+model_1 = lm(SalePrice ~ . -GarageCars, data = numeric_ames_trn_data[, top_cor_col_names])
+model_2 = lm(SalePrice ~ . -GarageArea, data = numeric_ames_trn_data[, top_cor_col_names])
+data_frame = data.frame(
+            c("Model (GarageCars removed)", "Model (GarageArea removed)"),
+            c(calc_loocv_rmse(model_1), calc_loocv_rmse(model_2)),
+            c(calc_adj_r2(model_1), calc_adj_r2(model_2))
+            )
+create_table(data_frame, c("Model", "LOOCV RMSE", "$Adjusted \\space R^2$"), "**GarageCars vs GarageArea**")
+```
+
+We formed one model by removing `GarageCars` and another one by removing `GarageArea` and then calculate $LOOCV \space RMSE$ and $Adjusted \space R^2$. Here we chose to remove `GarageArea` since $Adjusted \space R^2$ is better when that is removed.
+
+
+```{r, echo = FALSE}
+model_1 = lm(SalePrice ~ . -GarageArea-GrLivArea, data = numeric_ames_trn_data[, top_cor_col_names])
+model_2 = lm(SalePrice ~ . -GarageArea-TotRmsAbvGrd, data = numeric_ames_trn_data[, top_cor_col_names])
+data_frame = data.frame(
+            c("Model (GrLivArea removed)", "Model (TotRmsAbvGrd removed)"),
+            c(calc_loocv_rmse(model_1), calc_loocv_rmse(model_2)),
+            c(calc_adj_r2(model_1), calc_adj_r2(model_2))
+            )
+create_table(data_frame, c("Model", "LOOCV RMSE", "$Adjusted \\space R^2$"), "**GrLivArea vs TotRmsAbvGrd**")
+```
+
+We formed one model by removing `GrLivArea` and another one by removing `TotRmsAbvGrd` and then calculate $LOOCV \space RMSE$ and $Adjusted \space R^2$. Here we chose to remove `TotRmsAbvGrd` since $Adjusted \space R^2$ is better when that is removed.
+
+
+```{r, echo = FALSE}
+model_1 = lm(SalePrice ~ . -GarageArea-TotRmsAbvGrd-TotalBsmtSF, data = numeric_ames_trn_data[, top_cor_col_names])
+model_2 = lm(SalePrice ~ . -GarageArea-TotRmsAbvGrd-X1stFlrSF, data = numeric_ames_trn_data[, top_cor_col_names])
+data_frame = data.frame(
+            c("Model (TotalBsmtSF removed)", "Model (X1stFlrSF removed)"),
+            c(calc_loocv_rmse(model_1), calc_loocv_rmse(model_2)),
+            c(calc_adj_r2(model_1), calc_adj_r2(model_2))
+            )
+create_table(data_frame, c("Model", "LOOCV RMSE", "$Adjusted \\space R^2$"), "**TotalBsmtSF vs X1stFlrSF**")
+```
+
+We formed one model by removing `TotalBsmtSF` and another one by removing `X1stFlrSF` and then calculate $LOOCV \space RMSE$ and $Adjusted \space R^2$. Here we chose to remove `X1stFlrSF` since $Adjusted \space R^2$ is better when that is removed.
+
+```{r, echo = FALSE, results = 'hide'}
+columns_to_be_removed = c("GarageArea", "TotRmsAbvGrd", "X1stFlrSF")
+response_column = c("SalePrice")
+(selected_numerical_columns = setdiff(top_cor_col_names, union(columns_to_be_removed, response_column)))
+```
+
+So finally we select these numerical columns ``r selected_numerical_columns``.
+
+Below we will check to see how a model with these selected variables perform. 
+
+```{r}
+model_numeric_remove_colinear = lm(SalePrice ~ ., 
+    data = numeric_ames_trn_data[, union(selected_numerical_columns, response_column)])
+```
+
+Below is the result of diagnostics done on this model:
+
+```{r, fig.width = 10, fig.height = 5, echo = FALSE}
+diag_result_final_numeric = diagnostics(model_numeric_remove_colinear, displayit = TRUE,
+            newdata = ames_tst_data, new_response = ames_tst_data$SalePrice)
+```
+
+See can see that LOOCV RMSE has improved when we removed colinear variables.
+
+Next we will check to see if we can improve the model by including some sigificant factor variables (including categorical variables).
+
+### Analyze and select factor variables
+
+In this section we will study the factor variables by looking at boxplots for `SalePrice` vs all factor variables to see how each of them impact the response.
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~MSSubClass, data = ames_trn_data, xlab = "MSSubClass", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~MSZoning, data = ames_trn_data, xlab = "MSZoning", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Street, data = ames_trn_data, xlab = "Street", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Alley, data = ames_trn_data, xlab = "Alley", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~LotShape, data = ames_trn_data, xlab = "LotShape", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~LandContour, data = ames_trn_data, xlab = "LandContour", ylab = "SalePrice")
+```
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~Utilities, data = ames_trn_data, xlab = "Utilities", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~LotConfig, data = ames_trn_data, xlab = "LotConfig", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~LandSlope, data = ames_trn_data, xlab = "LandSlope", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Neighborhood, data = ames_trn_data, xlab = "Neighborhood", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Condition1, data = ames_trn_data, xlab = "Condition1", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Condition2, data = ames_trn_data, xlab = "Condition2", ylab = "SalePrice")
+```
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~BldgType, data = ames_trn_data, xlab = "BldgType", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~HouseStyle, data = ames_trn_data, xlab = "HouseStyle", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~OverallQual, data = ames_trn_data, xlab = "OverallQual", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~OverallCond, data = ames_trn_data, xlab = "OverallCond", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~YearRemodAdd, data = ames_trn_data, xlab = "YearRemodAdd", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~RoofStyle, data = ames_trn_data, xlab = "RoofStyle", ylab = "SalePrice")
+```
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~RoofMatl, data = ames_trn_data, xlab = "RoofMatl", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Exterior1st, data = ames_trn_data, xlab = "Exterior1st", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Exterior2nd, data = ames_trn_data, xlab = "Exterior2nd", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~MasVnrType, data = ames_trn_data, xlab = "MasVnrType", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~ExterQual, data = ames_trn_data, xlab = "ExterQual", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~ExterCond, data = ames_trn_data, xlab = "ExterCond", ylab = "SalePrice")
+```
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~Foundation, data = ames_trn_data, xlab = "Foundation", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~BsmtQual, data = ames_trn_data, xlab = "BsmtQual", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~BsmtCond, data = ames_trn_data, xlab = "BsmtCond", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~BsmtExposure, data = ames_trn_data, xlab = "BsmtExposure", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~BsmtFinType1, data = ames_trn_data, xlab = "BsmtFinType1", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~BsmtFinType2, data = ames_trn_data, xlab = "BsmtFinType2", ylab = "SalePrice")
+```
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~Heating, data = ames_trn_data, xlab = "Heating", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~HeatingQC, data = ames_trn_data, xlab = "HeatingQC", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~CentralAir, data = ames_trn_data, xlab = "CentralAir", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Electrical, data = ames_trn_data, xlab = "Electrical", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~KitchenQual, data = ames_trn_data, xlab = "KitchenQual", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Functional, data = ames_trn_data, xlab = "Functional", ylab = "SalePrice")
+```
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~FireplaceQu, data = ames_trn_data, xlab = "FireplaceQu", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~GarageType, data = ames_trn_data, xlab = "GarageType", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~GarageYrBlt, data = ames_trn_data, xlab = "GarageYrBlt", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~GarageFinish, data = ames_trn_data, xlab = "GarageFinish", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~GarageQual, data = ames_trn_data, xlab = "GarageQual", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~GarageCond, data = ames_trn_data, xlab = "GarageCond", ylab = "SalePrice")
+```
+
+```{r, fig.width = 10, fig.height = 7, echo = FALSE}
+par(mfrow=c(3,2))
+draw_boxplot(formula = SalePrice~PavedDrive, data = ames_trn_data, xlab = "PavedDrive", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~PoolQC, data = ames_trn_data, xlab = "PoolQC", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~Fence, data = ames_trn_data, xlab = "Fence", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~MiscFeature, data = ames_trn_data, xlab = "MiscFeature", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~YrSold, data = ames_trn_data, xlab = "YrSold", ylab = "SalePrice")
+draw_boxplot(formula = SalePrice~SaleType, data = ames_trn_data, xlab = "SaleType", ylab = "SalePrice")
+```
+
+**Surprisingly house price does not depend on the year house was sold from box plot above**
+
+From the above boxplots for factor variables `OverallQual`, `Neigboorhood`, and `ExterQual` impact `SalePrice`. But some of the `ExterQual` are collinear so don't include them in the model.
+
+```{r, echo = FALSE, results = 'hide'}
+selected_factor_columns = c("Neigboorhood","OverallQual")
+(selected_columns = union(selected_numerical_columns, selected_factor_columns))
+```
+
+So finally we are done with variable selection. We select the below variables for our model:
+
+``r selected_columns``
+
+***
+
+# Results
+
+
+## Model Selection
+
+Next we can move to model selection.
+
+### Model 1: Additive model using selected variables
+
+We will form an additive model from variables selected from our analysis done above.
+
+```{r}
+model_sel_add = lm(SalePrice ~ GrLivArea + GarageCars + FullBath + YearBuilt 
+                              + TotalBsmtSF + Fireplaces + OpenPorchSF
+                              + Neighborhood + OverallQual,
+                              data = ames_trn_data)
+```
+
+Below is the result of diagnostics done on this model:
+
+```{r, fig.width = 10, fig.height = 5, echo = FALSE}
+diag_result_sel_add = diagnostics(model_sel_add, displayit = TRUE, 
+            newdata = ames_tst_data, new_response = ames_tst_data$SalePrice)
+```
+
+
+Both Shapiro-Wilk test and Normal Q-Q plot confirms that Normality assumption is suspected for this model. 
+
+BP test supports Constant Variance assumption for this model. But after inspecting the Fitted vs Residual plot we come to the conclusion that Constant variance assumption is suspected. 
+
+We can see that this model is doing better than the model with the numerical variables.
+
+### Model 2: Use BIC to select from 2-way interaction model using selected variables
+
+We will form 2-way interaction model using our selected variables. Then use BIC to select a smaller model.
+
+```{r}
+model_sel_int = lm(
+            SalePrice ~ 
+            (GrLivArea + GarageCars + FullBath + YearBuilt 
+                              + TotalBsmtSF + Fireplaces + OpenPorchSF
+                              + Neighborhood + OverallQual) ^ 2, 
+            data = ames_trn_data)
+model_sel_int_bic = step(model_sel_int, direction = "backward", k = log(nrow(ames_trn_data)), trace=0)
+```
+
+Below is the result of diagnostics done on this smaller model:
+
+```{r, fig.width = 10, fig.height = 5, echo = FALSE}
+diag_result_sel_int_bic = diagnostics(model_sel_int_bic, displayit = TRUE, 
+            newdata = ames_tst_data, new_response = ames_tst_data$SalePrice)
+```
+
+With this model the LOOCV RMSE got better, but number of parameters increased and test error got worse.
+
+Both Shapiro-Wilk test and Normal Q-Q plot confirms that Normality assumption is suspected for this model. 
+
+Both BP Test and Fitted vs Residual plot confirms that Constant Variance assumption is suspected for this model. 
+
+### Model 3: Form a model similar to Model 1 with log transform on response
+
+Here we form a new model to see if we can achieve constant variance and normality. 
+
+```{r}
+model_sel_add_log_resp = lm(
+                  log(SalePrice) ~ 
+                  GrLivArea + GarageCars + FullBath + YearBuilt 
+                              + TotalBsmtSF + Fireplaces + OpenPorchSF
+                              + Neighborhood + OverallQual, 
+                  data=ames_trn_data)
+```
+
+Below is the result of diagnostics done on this model:
+
+```{r, fig.width = 10, fig.height = 5, echo = FALSE}
+diag_result_sel_add_log_resp = diagnostics(model_sel_add_log_resp, response_in_log = TRUE, displayit = TRUE, 
+                                           newdata = ames_tst_data, 
+                                           new_response = ames_tst_data$SalePrice)
+```
+
+LOOCV RMSE of this model is worser than Model 1 and Model 2. 
+
+$Adjusted \space R^2$ is worse than Model 2 and almost same as Model 1.
+
+Test error is better than Model 2 but comparable compared to Model 1.
+
+Both Shapiro-Wilk test and Normal Q-Q plot confirms that Normality assumption is suspected for this model. 
+
+BP test supports Constant Variance assumption for this model. But after inspecting the Fitted vs Residual plot we come to the conclusion that Constant variance assumption is suspected. 
+
+### Model 4: Use Model 3 after removing high influential and high leverage points
+
+We are tring to build a model that satisfied linearity assumptions.
+
+We will first remove highly influential points and test out using Model 3.
+
+```{r}
+ames_trn_data_cd = cooks.distance(model_sel_add_log_resp)
+ames_trn_data_removed_infl = ames_trn_data[!row.names(ames_trn_data) 
+                            %in% which(ames_trn_data_cd > 4 / length(ames_trn_data_cd)),]
+model_log_resp_no_infl_points = lm(
+                    log(SalePrice) ~ 
+                    GrLivArea + GarageCars + FullBath + YearBuilt 
+                              + TotalBsmtSF + Fireplaces + OpenPorchSF
+                              + Neighborhood + OverallQual,
+                    data = ames_trn_data_removed_infl)
+```
+
+Below is the result of diagnostics done on this model:
+
+```{r, fig.width = 10, fig.height = 5, echo = FALSE}
+diag_result_no_infl_points = diagnostics(model_log_resp_no_infl_points, 
+                                         response_in_log = TRUE, displayit = TRUE, 
+                                         newdata = ames_tst_data, new_response = ames_tst_data$SalePrice)
+```
+
+We can see that LOOCV RMSE of this model got worse.
+
+
+
+Lets remove high leverage points as well and test out using Model 3.
+
+```{r}
+ames_trn_data_hatvals = hatvalues(model_log_resp_no_infl_points)
+ames_trn_data_removed_infl_levr = ames_trn_data_removed_infl[!row.names(ames_trn_data_removed_infl) 
+                                  %in% which(ames_trn_data_hatvals > 2 * mean(ames_trn_data_hatvals)),]
+model_no_infl_levr_points = lm(
+                      log(SalePrice) ~ 
+                      GrLivArea + GarageCars + FullBath + YearBuilt 
+                              + TotalBsmtSF + Fireplaces + OpenPorchSF
+                              + Neighborhood + OverallQual, 
+                      data = ames_trn_data_removed_infl_levr)
+```
+
+Below is the result of diagnostics done on this model:
+
+```{r, fig.width = 10, fig.height = 5, echo = FALSE}
+diag_result_no_infl_levr_points = diagnostics(model_no_infl_levr_points, response_in_log = TRUE, displayit = TRUE, 
+            newdata = ames_tst_data, new_response = ames_tst_data$SalePrice)
+```
+
+After removing high influenetial and leverage points Model 4 still does not satisy linearity assumptions.
+
+**Let us compare all our models in the below table.**
+
+```{r, echo = FALSE}
+model_names = c("Model#1: Additive model",
+                "Model#2: Selected using BIC from 2-way interaction model",
+                "Model#3: Additive model with Log Transform of Response",
+                "Model#4: High influential and high leverage points removed from Model 3"
+                )
+
+loocv_rmses = c(diag_result_sel_add$loocv_rmse, 
+                diag_result_sel_int_bic$loocv_rmse,
+                diag_result_sel_add_log_resp$loocv_rmse,
+                diag_result_no_infl_levr_points$loocv_rmse)
+
+adj_r2s = c(diag_result_sel_add$adj_r2, 
+            diag_result_sel_int_bic$adj_r2,
+            diag_result_sel_add_log_resp$adj_r2,
+            diag_result_no_infl_levr_points$adj_r2)
+
+average_percent_errors = c(diag_result_sel_add$test_error, 
+                           diag_result_sel_int_bic$test_error, 
+                           diag_result_sel_add_log_resp$test_error, 
+                           diag_result_no_infl_levr_points$test_error)
+
+num_params = c(diag_result_sel_add$num_param, 
+               diag_result_sel_int_bic$num_param, 
+               diag_result_sel_add_log_resp$num_param, 
+               diag_result_no_infl_levr_points$num_param)
+
+sw_decisions = c(diag_result_sel_add$sw_decision, 
+                 diag_result_sel_int_bic$sw_decision, 
+                 diag_result_sel_add_log_resp$sw_decision, 
+                 diag_result_no_infl_levr_points$sw_decision)
+
+bp_decisions = c(diag_result_sel_add$bp_decision, 
+                 diag_result_sel_int_bic$bp_decision, 
+                 diag_result_sel_add_log_resp$bp_decision, 
+                 diag_result_no_infl_levr_points$bp_decision)
+
+data_frame = data.frame(model_names, loocv_rmses, adj_r2s, average_percent_errors, 
+                        num_params, sw_decisions, bp_decisions)
+create_table(data_frame, c("Model", "Training LOOCV RMSE", "Training Adjusted $R^2$", 
+                           "Test Error", "Num of parameters", "SW decision", "BP decision"), 
+             "**Model Comparison**")
+```
+
+Based on the above comparison we feel that `Model 1` is the best model which less complex, with better $LOOCV \space RMSE$ and $Adjusted \space R^2$ and reasonable test error value.
+
+Lets plot Predicted Vs Actual for the best model. 
+
+```{r, echo = FALSE}
+predicted_response = predict(model_sel_add, newdata = ames_tst_data)
+plot_predicted_vs_actual(ames_tst_data$SalePrice, predicted_response, xlab = "Actual Price", 
+                        ylab = "Predicted Price", main = "Predicted vs Actual Price")
+```
+
+Predicted Vs Actual plot indicates that this model does a good job in estimating prices.
+
+***
+
+# Discussion
+
+
+
+The model we picked for the best is the lowest in LOOCV RMSE and the highest in $adjusted \space R^2$ so that it does not have any collinearity and gets one of the lowest prediction error for test sets. Following would be our final model: 
+
+\[
+Y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 x_3 + \beta_4 x_4 + \beta_5 x_5 + \beta_6 x_6 + \beta_7 x_7 +  \beta_8 x_8 + \beta_9 x_9  + \epsilon,
+\]
+
+where
+
+- $Y$ is `SalePrice`
+- $x_1$ is `GrLivArea`
+- $x_2$ is `GarageCars`
+- $x_3$ is `FullBath`
+- $x_4$ is `YearBuilt`
+- $x_5$ is `TotalBsmtSF`
+- $x_6$ is `Fireplaces`
+- $x_7$ is `OpenPorchSF`
+- $x_8$ is `Neighborhood`
+- $x_9$ is `OverallQual`.
+
+These are the coefficients of the model selected:
+
+```{r echo = FALSE}
+coef(summary(model_sel_add))[ ,"Estimate"]
+```
+
+Evaluating coefficient of the selected model we see the change in price for `overalQual` of 1 to `overallQual` of 9 is whooping `r round(coef(summary(model_sel_add))["OverallQual9","Estimate"],2)`. Hence has most influence on price sold. Also, it appears Nieghborhood `Crawfor` is possibly a affluent neighborhood, owning a house there relative to a house in `Blmgtn` increases sold house price on average by `r round(coef(summary(model_sel_add))["NeighborhoodCrawfor","Estimate"],2)`
+
+From AMES IOWA there were some interesting observation observed. From the analysis above it could be seen in AMES IOWA price of the house is determined primarily with factors `GrLivArea`,`GarageCars`, `FullBath`,`YearBuilt`, `TotalBsmtSF`, `Fireplaces`,`OpenPorchSF`, `Neighborhood` and `OverallQual`. Suprisingly, it was observed house prices were not influnenced the by the year house was sold, this information maybe useful for an investor who maybe interested in growth. 
+
+The reason why we reject other models and choose to lean towards additive model `Model 1` are:
+Linear assumptions are violated in the model even with log transformation of response. However, `Model 1` and `Model 3` are good for prediction. As shown earlier ~$`r diag_result_sel_add$test_error`$% errors is in `Model 1` and ~$`r diag_result_sel_add_log_resp$test_error`$% in `Model 3`. `Model 2` is ignored due to high paramters with no major improvements in other criteria. 
+
+***
+
+# Future implementation?
+
+As in the previous context we talked about how we find our best model, since we have some knowledges towards the machine learning implementation. We could use different algorithms to train the model, such as random forest, gradient boost, xgboost and even deep learning libraries that train neurons for forward propogation and backward propogation to optimize residuals of each layer. Thus, there are multiple algorithms out there for us to discover. However, it would be our responsibility to actually look into each of them, figure out the accuracy and the mechanism for that algorithm, then polish, compare and discuss about those implementations. How can we actually make this solution better, and what is the best approach to it. That is our journey towards an optimize resolution.
+
+***
+
+# Appendix
+
+This project is inspired by [Kaggle](https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data)
+
+***
